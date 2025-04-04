@@ -81,6 +81,7 @@ public class ConsumerThread
 
 public class VideoConsumer : VideoService.VideoServiceBase
 {
+    //Shared Buffer
     private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
     private readonly List<(int, string)> assignedFiles = new List<(int, string)>();
     private readonly object _lock = new();
