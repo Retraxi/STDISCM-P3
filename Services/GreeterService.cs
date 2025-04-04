@@ -17,8 +17,8 @@ public class ConsumerThread
     //self-buffer
     private List<(int, byte[])> fileChunks;
     public string? currentFile { get; set; }
-    public int? currentChunkIndex { get; set; }
-    public int? totalChunks { get; set; }
+    public int currentChunkIndex { get; set; }
+    public int totalChunks { get; set; }
     private bool isRunning { get; set; }
     public bool fileCompleted { get; set; }
 
@@ -43,33 +43,43 @@ public class ConsumerThread
             {
                 foreach (var file in _fileChunks)
                 {
-                    Console.WriteLine($"Iterating through filechunks: {file.Key}");
+                    //Console.WriteLine($"Iterating through filechunks: {file.Key}");
                     if(this.currentFile == file.Key)
                     {
                         //var fileName = file.Key
-                        Console.WriteLine("Entered runConsumer writing section");
+                        //Console.WriteLine("Entered runConsumer writing section");
                         var sortedChunks = file.Value.OrderBy(c => c.Item1).Select(c => c.Item2).ToList();
+                        //Console.WriteLine($"Total number of chunk in sortedChunks: {sortedChunks.Count}");
                         string outputPath = Path.Combine("UploadedVideos", this.currentFile);
 
                         Directory.CreateDirectory("UploadedVideos");
 
-                        using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-                        foreach (var chunk in sortedChunks)
+                        using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024))
                         {
-                            fileStream.Write(chunk, 0, chunk.Length);
-                            this.currentChunkIndex++;
+                            foreach (var chunk in sortedChunks)
+                            {
+                                //Console.WriteLine("Chunk being written.");
+                                fileStream.Write(chunk, 0, chunk.Length);
+                                fileStream.Flush();
+                                this.currentChunkIndex++;
+                                //Console.WriteLine($"[]");
+                                //Console.WriteLine("Chunk completely written.");
+                            }
+                            if (this.currentChunkIndex >= this.totalChunks)
+                            {
+                                Console.WriteLine($"File {this.currentFile} assembled successfully.");
+                                _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
+                                                                                         //reset
+                                this.currentChunkIndex = 0;
+                                this.currentFile = null;
+                                this.totalChunks = 0;
+                                Console.WriteLine("Ended runConsumer writing section");
+                                break;
+                            }
                         }
+                        
 
-                        if (this.currentChunkIndex == this.totalChunks)
-                        {
-                            Console.WriteLine($"File {this.currentFile} assembled successfully.");
-                            _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
-                            //reset
-                            this.currentChunkIndex = 0;
-                            this.currentFile = null;
-                            this.totalChunks = 0;
-                            Console.WriteLine("Ended runConsumer writing section");
-                        }
+                        
                     }
 
                 }
@@ -99,23 +109,14 @@ public class VideoConsumer : VideoService.VideoServiceBase
             consumerThreads[0] = new ConsumerThread(_fileChunks);
             threadList[0] = new Thread(consumerThreads[0].runConsumer);
             threadList[0].Start();
-            if (initialRun) { 
-                //initialization
-                await requestStream.MoveNext(context.CancellationToken);
-
-                var chunk = requestStream.Current;
-
-                ////readFromFile
-                //if(chunk.Config != null)
-                //{
-                //    //check if pThreads are higher than cThreads
-                //    if (chunk.Config.PThreads > )
-                //    {
-                        
-                //    }
-                //}
-
-            }
+            //initialization
+            //no config
+            //for (global::System.Int32 i = 0; i < 4; i++)
+            //{
+            //    consumerThreads[i] = new ConsumerThread(_fileChunks);
+            //    threadList[i] = new Thread(consumerThreads[i].runConsumer);
+            //    threadList[i].Start();
+            //}
             while (await requestStream.MoveNext(context.CancellationToken))
             {
                 var chunk = requestStream.Current;
