@@ -75,7 +75,7 @@ public class ConsumerThread
 
                 lock (fileLock)
                 {
-                    using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 1024 * 1024))
+                    using (var fileStream = new FileStream(outputPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 1024 * 1024))
                     {
                         foreach (var chunk in fileChunks)
                         {
@@ -104,22 +104,29 @@ public class ConsumerThread
                         {
                             Thread.Sleep(50);
                         }
-                        if (this.currentChunkIndex >= this.totalChunks && !_fileChunks.TryGetValue(this.currentFile, out var remaining))
+                        if (this.currentChunkIndex == this.totalChunks)
                         {
-                            if (remaining != null )
-                            { //not null
-                                if (remaining.Count == 0)
-                                {
-                                    Console.WriteLine($"currentChunk [{this.currentChunkIndex}] | totalChunks [{this.totalChunks}]");
-                                    Console.WriteLine($"File {this.currentFile} assembled successfully.");
-                                    _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
-                                                                                             //reset
-                                    this.currentChunkIndex = 0;
-                                    this.currentFile = null;
-                                    this.totalChunks = 0;
-                                    Console.WriteLine("Ended runConsumer writing section");
+                            if (_fileChunks.TryGetValue(this.currentFile, out var remaining))
+                            {
+                                if (remaining != null)
+                                { //not null
+                                    lock (remaining)
+                                    {
+                                        if (remaining.Count == 0)
+                                        {
+                                            Console.WriteLine($"currentChunk [{this.currentChunkIndex}] | totalChunks [{this.totalChunks}]");
+                                            Console.WriteLine($"File {this.currentFile} assembled successfully.");
+                                            _fileChunks.TryRemove(this.currentFile, out var removedList); //remove the file and all of its chunks
+                                                                                                     //reset
+                                            this.currentChunkIndex = 0;
+                                            this.currentFile = null;
+                                            this.totalChunks = 0;
+                                            Console.WriteLine("Ended runConsumer writing section");
+                                        }
+                                    }
                                 }
                             }
+                            
                         }
                     }
                 }
