@@ -25,6 +25,8 @@ public class ConsumerThread
     private ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks { get; set; }
     private object _locc {  get; set; }
 
+    private static readonly ConcurrentDictionary<string, object> _fileLocks = new();
+
     public ConsumerThread(ConcurrentDictionary<string, List<(int, byte[])>> sharedChunks, object _lock)
     {
         fileChunks = new List<(int, byte[])>();
@@ -46,9 +48,14 @@ public class ConsumerThread
                 foreach (var file in _fileChunks)
                 {
                     //Console.WriteLine($"Iterating through filechunks: {file.Key}");
-                    if(this.currentFile == file.Key)
+                    List<(int, byte[])> snapshot;
+                    if (_fileChunks.TryGetValue(this.currentFile, out var list))
                     {
-                        fileChunks = file.Value.OrderBy(c => c.Item1).ToList();
+                        lock (list)
+                        {
+                            snapshot = list.OrderBy(c => c.Item1).ToList();
+                        }
+                        fileChunks = snapshot;
                     }
 
                 }
@@ -59,43 +66,61 @@ public class ConsumerThread
                 
                 //Console.WriteLine($"Total number of chunk in sortedChunks: {sortedChunks.Count}");
                 string outputPath = Path.Combine("UploadedVideos", this.currentFile);
+                bool chunkWritten = false;
 
                 Directory.CreateDirectory("UploadedVideos");
 
-                using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024))
-                {
-                    foreach (var chunk in fileChunks)
-                    {
-                        if (this.currentChunkIndex == chunk.Item1)
-                        {
-                            //Console.WriteLine("Chunk being written
-                            fileStream.Write(chunk.Item2, 0, chunk.Item2.Length);
-                            fileStream.Flush();
-                            Console.WriteLine($"[{this.currentChunkIndex} has been written]");
+                var fileLock = _fileLocks.GetOrAdd(outputPath, _ => new object());
 
-                            //clear of processed chunks
-                            if (_fileChunks.TryGetValue(this.currentFile, out var list))
+
+                lock (fileLock)
+                {
+                    using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 1024 * 1024))
+                    {
+                        foreach (var chunk in fileChunks)
+                        {
+                            if (this.currentChunkIndex == chunk.Item1)
                             {
-                                lock (list)
+                                //Console.WriteLine("Chunk being written
+                                fileStream.Write(chunk.Item2, 0, chunk.Item2.Length);
+                                fileStream.Flush();
+                                Console.WriteLine($"[{this.currentChunkIndex} has been written]");
+
+                                //clear of processed chunks
+                                if (_fileChunks.TryGetValue(this.currentFile, out var list))
                                 {
-                                    list.RemoveAll(c => c.Item1 == this.currentChunkIndex);
+                                    lock (list)
+                                    {
+                                        list.RemoveAll(c => c.Item1 == this.currentChunkIndex);
+                                    }
+                                }
+                                this.currentChunkIndex++;
+                                chunkWritten = true;
+                                break;
+                                //Console.WriteLine("Chunk completely written.");
+                            }
+                        }
+                        if (!chunkWritten)
+                        {
+                            Thread.Sleep(50);
+                        }
+                        if (this.currentChunkIndex >= this.totalChunks && !_fileChunks.TryGetValue(this.currentFile, out var remaining))
+                        {
+                            if (remaining != null )
+                            { //not null
+                                if (remaining.Count == 0)
+                                {
+                                    Console.WriteLine($"currentChunk [{this.currentChunkIndex}] | totalChunks [{this.totalChunks}]");
+                                    Console.WriteLine($"File {this.currentFile} assembled successfully.");
+                                    _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
+                                                                                             //reset
+                                    this.currentChunkIndex = 0;
+                                    this.currentFile = null;
+                                    this.totalChunks = 0;
+                                    Console.WriteLine("Ended runConsumer writing section");
                                 }
                             }
-                            this.currentChunkIndex++;
-                            //Console.WriteLine("Chunk completely written.");
                         }
-                    }
-                    if (this.currentChunkIndex >= this.totalChunks)
-                    {
-                        Console.WriteLine($"currentChunk [{this.currentChunkIndex}] | totalChunks [{this.totalChunks}]");
-                        Console.WriteLine($"File {this.currentFile} assembled successfully.");
-                        _fileChunks.TryRemove(currentFile, out var removedList); //remove the file and all of its chunks
-                                                                                 //reset
-                        this.currentChunkIndex = 0;
-                        this.currentFile = null;
-                        this.totalChunks = 0;
-                        Console.WriteLine("Ended runConsumer writing section");
-                        fileStream.Close();
                     }
                 }
             }
