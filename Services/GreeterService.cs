@@ -21,10 +21,10 @@ public class ConsumerThread
     public int totalChunks { get; set; }
     private bool isRunning { get; set; }
     public bool fileCompleted { get; set; }
-    private bool initial {  get; set; }
+    private bool initial { get; set; }
 
     private ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks { get; set; }
-    private object _locc {  get; set; }
+    private object _locc { get; set; }
 
     private static readonly ConcurrentDictionary<string, object> _fileLocks = new();
 
@@ -52,7 +52,7 @@ public class ConsumerThread
                 {
                     if (File.Exists(outputPath))
                     {
-                        File.Delete(outputPath); 
+                        File.Delete(outputPath);
                     }
                     initial = false;
                 }
@@ -74,9 +74,9 @@ public class ConsumerThread
                 //Console.WriteLine($"Current Chunks: [{file.Value.Count}]");
                 //var fileName = file.Key
                 //Console.WriteLine("Entered runConsumer writing section");
-                
+
                 //Console.WriteLine($"Total number of chunk in sortedChunks: {sortedChunks.Count}");
-                
+
                 bool chunkWritten = false;
 
                 Directory.CreateDirectory("UploadedVideos");
@@ -128,7 +128,7 @@ public class ConsumerThread
                                             Console.WriteLine($"currentChunk [{this.currentChunkIndex}] | totalChunks [{this.totalChunks}]");
                                             Console.WriteLine($"File {this.currentFile} assembled successfully.");
                                             _fileChunks.TryRemove(this.currentFile, out var removedList); //remove the file and all of its chunks
-                                                                                                     //reset
+                                                                                                          //reset
                                             this.currentChunkIndex = 0;
                                             this.currentFile = null;
                                             this.totalChunks = 0;
@@ -137,7 +137,7 @@ public class ConsumerThread
                                     }
                                 }
                             }
-                            
+
                         }
                     }
                 }
@@ -153,12 +153,12 @@ public class VideoConsumer : VideoService.VideoServiceBase
     private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
     private readonly List<(int, string)> assignedFiles = new List<(int, string)>();
     private readonly object _lock = new();
-    private bool initialRun = true;
 
-    public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream, 
+    public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream,
                                                            IServerStreamWriter<UploadResponse> responseStream,
                                                            ServerCallContext context)
     {
+        bool initialRun = true;
         try
         {
             //defaults to 1
@@ -172,16 +172,20 @@ public class VideoConsumer : VideoService.VideoServiceBase
                     var initMsg = requestStream.Current;
                     if (initMsg.DataCase != VideoChunk.DataOneofCase.Config)
                     {
-                        return new UploadResponse { CurrStatus = UploadResponse.Types.status.Error };
+                        //Console.WriteLine("Lily died");
+                        Console.WriteLine(initialRun);
+                        await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Error });
                     }
-                    else {
+                    else
+                    {
                         //successful initialization
                         var numThreads = 0;
                         maxBufferSize = initMsg.Config.QueueSize;
                         if (initMsg.Config.PThreads > initMsg.Config.CThreads)
                         {
                             numThreads = initMsg.Config.CThreads;
-                        } else
+                        }
+                        else
                         {
                             numThreads = initMsg.Config.PThreads;
                         }
@@ -195,10 +199,18 @@ public class VideoConsumer : VideoService.VideoServiceBase
                             threadList[i] = new Thread(consumerThreads[i].runConsumer);
                             threadList[i].Start();
                         }
-                        return new UploadResponse { CurrStatus= UploadResponse.Types.status.Init };
+
+                        lock (_lock)
+                        {
+                            initialRun = false;
+                        }
+                        //Console.WriteLine($"LILY: {initialRun}");
+                        await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Init });
                     }
-                } else
+                }
+                else
                 {
+                    //Console.WriteLine("LILY LILY");
                     var chunk = requestStream.Current;
                     //stop sending
                     if (_fileChunks.Count >= maxBufferSize)
