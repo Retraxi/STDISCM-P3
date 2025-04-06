@@ -153,26 +153,28 @@ public class VideoConsumer : VideoService.VideoServiceBase
     private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
     private readonly List<(int, string)> assignedFiles = new List<(int, string)>();
     private readonly object _lock = new();
-    private bool initialRun = true;
 
     public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream, 
                                                            IServerStreamWriter<UploadResponse> responseStream,
                                                            ServerCallContext context)
     {
-        try
-        {
+		bool initialRun = true;
+		try
+		{
             //defaults to 1
             ConsumerThread[] consumerThreads = new ConsumerThread[1];
             Thread[] threadList = new Thread[1];
             int maxBufferSize = 10;
             while (await requestStream.MoveNext(context.CancellationToken))
             {
-                if (initialRun)
+				if (initialRun)
                 {
                     var initMsg = requestStream.Current;
                     if (initMsg.DataCase != VideoChunk.DataOneofCase.Config)
                     {
-                        return new UploadResponse { CurrStatus = UploadResponse.Types.status.Error };
+                        //Console.WriteLine("Lily died");
+                        Console.WriteLine(initialRun);
+                        await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Error });
                     }
                     else {
                         //successful initialization
@@ -196,12 +198,17 @@ public class VideoConsumer : VideoService.VideoServiceBase
                             threadList[i].Start();
                         }
 
-                        initialRun = false;
-                        return new UploadResponse { CurrStatus= UploadResponse.Types.status.Init };
+                        lock (_lock)
+                        {
+                            initialRun = false;
+                        }
+						//Console.WriteLine($"LILY: {initialRun}");
+						await responseStream.WriteAsync(new UploadResponse { CurrStatus= UploadResponse.Types.status.Init });
                     }
                 } else
                 {
-                    var chunk = requestStream.Current;
+					//Console.WriteLine("LILY LILY");
+					var chunk = requestStream.Current;
                     //stop sending
                     if (_fileChunks.Count >= maxBufferSize)
                     {
