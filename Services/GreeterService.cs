@@ -21,6 +21,7 @@ public class ConsumerThread
     public int totalChunks { get; set; }
     private bool isRunning { get; set; }
     public bool fileCompleted { get; set; }
+    private bool initial {  get; set; }
 
     private ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks { get; set; }
     private object _locc {  get; set; }
@@ -37,6 +38,7 @@ public class ConsumerThread
         fileCompleted = false;
         _fileChunks = sharedChunks;
         _locc = _lock;
+        initial = true;
     }
 
     public void runConsumer()
@@ -45,6 +47,15 @@ public class ConsumerThread
         {
             if (this.currentFile != null)
             {
+                string outputPath = Path.Combine("UploadedVideos", this.currentFile);
+                if (initial)
+                {
+                    if (File.Exists(outputPath))
+                    {
+                        File.Delete(outputPath); 
+                    }
+                    initial = false;
+                }
                 foreach (var file in _fileChunks)
                 {
                     //Console.WriteLine($"Iterating through filechunks: {file.Key}");
@@ -65,7 +76,7 @@ public class ConsumerThread
                 //Console.WriteLine("Entered runConsumer writing section");
                 
                 //Console.WriteLine($"Total number of chunk in sortedChunks: {sortedChunks.Count}");
-                string outputPath = Path.Combine("UploadedVideos", this.currentFile);
+                
                 bool chunkWritten = false;
 
                 Directory.CreateDirectory("UploadedVideos");
@@ -142,7 +153,7 @@ public class VideoConsumer : VideoService.VideoServiceBase
     private readonly ConcurrentDictionary<string, List<(int, byte[])>> _fileChunks = new();
     private readonly List<(int, string)> assignedFiles = new List<(int, string)>();
     private readonly object _lock = new();
-    private bool initialRun = false;
+    private bool initialRun = true;
 
     public override async Task<UploadResponse> UploadVideo(IAsyncStreamReader<VideoChunk> requestStream, 
                                                            IServerStreamWriter<UploadResponse> responseStream,
@@ -150,54 +161,77 @@ public class VideoConsumer : VideoService.VideoServiceBase
     {
         try
         {
+            //defaults to 1
             ConsumerThread[] consumerThreads = new ConsumerThread[1];
             Thread[] threadList = new Thread[1];
-            int maxBufferSize = 100;
-            consumerThreads[0] = new ConsumerThread(_fileChunks, _lock);
-            threadList[0] = new Thread(consumerThreads[0].runConsumer);
-            threadList[0].Start();
-            //initialization
-            //no config
-            //for (global::System.Int32 i = 0; i < 4; i++)
-            //{
-            //    consumerThreads[i] = new ConsumerThread(_fileChunks);
-            //    threadList[i] = new Thread(consumerThreads[i].runConsumer);
-            //    threadList[i].Start();
-            //}
+            int maxBufferSize = 10;
             while (await requestStream.MoveNext(context.CancellationToken))
             {
-                var chunk = requestStream.Current;
-                //stop sending
-                if (_fileChunks.Count >= maxBufferSize)
+                if (initialRun)
                 {
-                    //tells it that the buffer is full and that the currChunk was not stored
-                    //Chunk is resent as a countermeasure for dropped data
-                    await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Full, CurrChunk = chunk });
-                }
-                else
-                {
-                    await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Ok });
-
-                    lock (_lock)
+                    var initMsg = requestStream.Current;
+                    if (initMsg.DataCase != VideoChunk.DataOneofCase.Config)
                     {
-                        if (!_fileChunks.ContainsKey(chunk.VidMetadata.FileName))
+                        return new UploadResponse { CurrStatus = UploadResponse.Types.status.Error };
+                    }
+                    else {
+                        //successful initialization
+                        var numThreads = 0;
+                        maxBufferSize = initMsg.Config.QueueSize;
+                        if (initMsg.Config.PThreads > initMsg.Config.CThreads)
                         {
-                            _fileChunks[chunk.VidMetadata.FileName] = new List<(int, byte[])>();
+                            numThreads = initMsg.Config.CThreads;
+                        } else
+                        {
+                            numThreads = initMsg.Config.PThreads;
                         }
-                        _fileChunks[chunk.VidMetadata.FileName].Add((chunk.VidMetadata.ChunkIndex, chunk.VidMetadata.Data.ToByteArray()));
 
-                        Console.WriteLine($"Received chunk {(chunk.VidMetadata.ChunkIndex) + 1}/{chunk.VidMetadata.TotalChunks} for {chunk.VidMetadata.FileName}");
-                        //assignment
-                        for (global::System.Int32 i = 0; i < consumerThreads.Length; i++)
-                        {//assignedFiles.Any(tuple => tuple.Item2 != chunk.VidMetadata.FileName) && 
-                            if (consumerThreads[i].currentFile == null)
+                        consumerThreads = new ConsumerThread[numThreads];
+                        threadList = new Thread[numThreads];
+
+                        for (global::System.Int32 i = 0; i < numThreads; i++)
+                        {
+                            consumerThreads[i] = new ConsumerThread(_fileChunks, _lock);
+                            threadList[i] = new Thread(consumerThreads[i].runConsumer);
+                            threadList[i].Start();
+                        }
+                        return new UploadResponse { CurrStatus= UploadResponse.Types.status.Init };
+                    }
+                } else
+                {
+                    var chunk = requestStream.Current;
+                    //stop sending
+                    if (_fileChunks.Count >= maxBufferSize)
+                    {
+                        //tells it that the buffer is full and that the currChunk was not stored
+                        //Chunk is resent as a countermeasure for dropped data
+                        await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Full, CurrChunk = chunk });
+                    }
+                    else
+                    {
+                        await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Ok });
+
+                        lock (_lock)
+                        {
+                            if (!_fileChunks.ContainsKey(chunk.VidMetadata.FileName))
                             {
-                                //assign a file
-                                var actingThread = consumerThreads[i];
-                                actingThread.currentFile = chunk.VidMetadata.FileName;
-                                actingThread.totalChunks = chunk.VidMetadata.TotalChunks;
-                                assignedFiles.Add((i, chunk.VidMetadata.FileName));
-                                Console.WriteLine($"[{i}] has been assigned the file [{actingThread.currentFile}] with a total of [{actingThread.totalChunks}]");
+                                _fileChunks[chunk.VidMetadata.FileName] = new List<(int, byte[])>();
+                            }
+                            _fileChunks[chunk.VidMetadata.FileName].Add((chunk.VidMetadata.ChunkIndex, chunk.VidMetadata.Data.ToByteArray()));
+
+                            Console.WriteLine($"Received chunk {(chunk.VidMetadata.ChunkIndex) + 1}/{chunk.VidMetadata.TotalChunks} for {chunk.VidMetadata.FileName}");
+                            //assignment
+                            for (global::System.Int32 i = 0; i < consumerThreads.Length; i++)
+                            {
+                                if (consumerThreads[i].currentFile == null && !assignedFiles.Any(c => c.Item2 == chunk.VidMetadata.FileName))
+                                {
+                                    //assign a file
+                                    var actingThread = consumerThreads[i];
+                                    actingThread.currentFile = chunk.VidMetadata.FileName;
+                                    actingThread.totalChunks = chunk.VidMetadata.TotalChunks;
+                                    assignedFiles.Add((i, chunk.VidMetadata.FileName));
+                                    Console.WriteLine($"[{i}] has been assigned the file [{actingThread.currentFile}] with a total of [{actingThread.totalChunks}]");
+                                }
                             }
                         }
                     }
