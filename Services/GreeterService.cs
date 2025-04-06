@@ -195,6 +195,8 @@ public class VideoConsumer : VideoService.VideoServiceBase
                             threadList[i] = new Thread(consumerThreads[i].runConsumer);
                             threadList[i].Start();
                         }
+
+                        initialRun = false;
                         return new UploadResponse { CurrStatus= UploadResponse.Types.status.Init };
                     }
                 } else
