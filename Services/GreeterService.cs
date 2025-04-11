@@ -56,21 +56,15 @@ public class ConsumerThread
                     }
                     initial = false;
                 }
-                foreach (var file in _fileChunks)
+                List<(int, byte[])> snapshot;
+                if (_fileChunks.TryGetValue(this.currentFile, out var list))
                 {
-                    //Console.WriteLine($"Iterating through filechunks: {file.Key}");
-                    List<(int, byte[])> snapshot;
-                    if (_fileChunks.TryGetValue(this.currentFile, out var list))
+                    lock (list)
                     {
-                        lock (list)
-                        {
-                            snapshot = list.OrderBy(c => c.Item1).ToList();
-                        }
-                        fileChunks = snapshot;
+                        snapshot = list.OrderBy(c => c.Item1).ToList();
                     }
-
+                    fileChunks = snapshot;
                 }
-
                 //Console.WriteLine($"Current Chunks: [{file.Value.Count}]");
                 //var fileName = file.Key
                 //Console.WriteLine("Entered runConsumer writing section");
@@ -98,11 +92,11 @@ public class ConsumerThread
                                 Console.WriteLine($"[{this.currentChunkIndex} has been written]");
 
                                 //clear of processed chunks
-                                if (_fileChunks.TryGetValue(this.currentFile, out var list))
+                                if (_fileChunks.TryGetValue(this.currentFile, out var processedChunks))
                                 {
-                                    lock (list)
+                                    lock (processedChunks)
                                     {
-                                        list.RemoveAll(c => c.Item1 == this.currentChunkIndex);
+                                        processedChunks.RemoveAll(c => c.Item1 == this.currentChunkIndex);
                                     }
                                 }
                                 this.currentChunkIndex++;
@@ -169,10 +163,11 @@ public class VideoConsumer : VideoService.VideoServiceBase
             {
                 if (initialRun)
                 {
+                    Console.Error.WriteLine("Initial Run has been entered.");
                     var initMsg = requestStream.Current;
                     if (initMsg.DataCase != VideoChunk.DataOneofCase.Config)
                     {
-                        //Console.WriteLine("Lily died");
+                        Console.WriteLine("Lily died");
                         Console.WriteLine(initialRun);
                         await responseStream.WriteAsync(new UploadResponse { CurrStatus = UploadResponse.Types.status.Error });
                     }
@@ -212,8 +207,9 @@ public class VideoConsumer : VideoService.VideoServiceBase
                 {
                     //Console.WriteLine("LILY LILY");
                     var chunk = requestStream.Current;
-                    //stop sending
-                    if (_fileChunks.Count >= maxBufferSize)
+                    int totalBytes = _fileChunks.Values.Sum(list => list.Sum(chunk => chunk.Item2.Length));
+                    //totalBytes/threadList.Length
+                    if ( _fileChunks.Count >= maxBufferSize)
                     {
                         //tells it that the buffer is full and that the currChunk was not stored
                         //Chunk is resent as a countermeasure for dropped data
