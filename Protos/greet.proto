@@ -30,6 +30,7 @@ message UploadResponse {
 		WAIT = 2;
 		FULL = 3;
 		COMPLETE = 4;
+		INIT = 5;
 	}
 	status currStatus = 1;
 	VideoChunk currChunk = 3;
@@ -37,8 +38,8 @@ message UploadResponse {
 
 
 message ConfigContainer {
-	oneof data{
-		int32 pThreads = 1;
-		int32 cThreads = 2;
-	}
+	int32 pThreads = 1;
+	int32 cThreads = 2;
+	int32 queueSize = 3;
+	int32 totalCount = 4;
 }
