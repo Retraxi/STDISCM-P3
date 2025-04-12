@@ -24,6 +24,7 @@ namespace VideoPlayerApp
         private object? _currentlyHoveredItem;
         private bool _suppressMouseLeave = false;
         private bool _suppressMouseEnter = false;
+        private HashSet<string> _pendingFiles = new();
 
         // Folder to monitor for video files
         private const string VideoFolderPath = @"C:\Users\Rapha\Source\Repos\STDISCM-P3\UploadedVideos\";
@@ -84,7 +85,22 @@ namespace VideoPlayerApp
         // Called when a new file is added to the folder
         private void FolderScanTimer_Tick(object sender, EventArgs e)
         {
-            var files = Directory.GetFiles(VideoFolderPath, "*.*", SearchOption.TopDirectoryOnly);
+            //var files = Directory.GetFiles(VideoFolderPath, "*.*", SearchOption.TopDirectoryOnly);
+            //foreach (var file in files)
+            //{
+            //    if (IsValidVideoFile(file) && !_videoFiles.Any(v => v.FilePath == file))
+            //    {
+            //        if (IsFileReady(file))
+            //        {
+            //            _videoFiles.Add(new VideoFile
+            //            {
+            //                FileName = Path.GetFileName(file),
+            //                FilePath = file
+            //            });
+            //        }
+            //    }
+            //}
+            var files = Directory.GetFiles(VideoFolderPath);
             foreach (var file in files)
             {
                 if (IsValidVideoFile(file) && !_videoFiles.Any(v => v.FilePath == file))
@@ -96,6 +112,11 @@ namespace VideoPlayerApp
                             FileName = Path.GetFileName(file),
                             FilePath = file
                         });
+                        _pendingFiles.Remove(file); // Remove if previously pending
+                    }
+                    else
+                    {
+                        _pendingFiles.Add(file);
                     }
                 }
             }
@@ -105,14 +126,15 @@ namespace VideoPlayerApp
         {
             try
             {
-                using (var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    return true;
-                }
+                long initialSize = new FileInfo(path).Length;
+                Thread.Sleep(500); // Give it a moment
+                long laterSize = new FileInfo(path).Length;
+
+                return initialSize == laterSize && initialSize > 0;
             }
             catch
             {
-                return false; // File is still being written or locked
+                return false;
             }
         }
         private CancellationTokenSource _previewCts;
